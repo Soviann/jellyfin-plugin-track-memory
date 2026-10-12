@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.cs text diff=csharp eol=lf
+*.sln text eol=crlf
+*.csproj text eol=lf
+*.props text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.md text eol=lf

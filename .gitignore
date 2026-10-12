@@ -1,0 +1,23 @@
+# Build and Output Folders
+bin/
+obj/
+out/
+publish/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# OS Generated
+.DS_Store
+Thumbs.db
+
+# Test Results
+TestResults/
+*.trx
+coverage/

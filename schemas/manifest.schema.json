@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "JellyfinPluginManifest",
+  "description": "JSON Schema for Jellyfin plugin repository manifest.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["guid", "name", "description", "overview", "owner", "category", "versions"],
+    "properties": {
+      "guid": {
+        "type": "string",
+        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        "description": "Unique GUID matching the plugin ID"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": {
+        "type": "string",
+        "minLength": 1
+      },
+      "overview": {
+        "type": "string",
+        "minLength": 1
+      },
+      "owner": {
+        "type": "string",
+        "minLength": 1
+      },
+      "category": {
+        "type": "string",
+        "minLength": 1
+      },
+      "versions": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["version", "changelog", "targetAbi", "sourceUrl", "checksum", "timestamp"],
+          "properties": {
+            "version": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+\\.\\d+$"
+            },
+            "changelog": {
+              "type": "string"
+            },
+            "targetAbi": {
+              "type": "string",
+              "pattern": "^\\d+\\.\\d+\\.\\d+\\.\\d+$"
+            },
+            "sourceUrl": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https?://.+(\\.zip)?$"
+            },
+            "checksum": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{32}$",
+              "description": "MD5 checksum of the remote zip file"
+            },
+            "timestamp": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "additionalProperties": false
+  }
+}

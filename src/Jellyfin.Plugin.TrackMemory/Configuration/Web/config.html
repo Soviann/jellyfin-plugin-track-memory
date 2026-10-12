@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Track Memory</title>
+</head>
+<body>
+    <div id="TrackMemoryConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="TrackMemoryConfigForm">
+                    <div class="verticalSection">
+                        <h2>Track Memory Configuration</h2>
+                        <p class="fieldDescription">
+                            Automatically remembers and applies your preferred audio and subtitle selections for movies and episodes, including in-playback changes and details page selections.
+                        </p>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input type="checkbox" id="EnablePlugin" is="emby-checkbox" />
+                                <span>Enable Track Memory Plugin</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Globally enable or disable the Track Memory interception and recording.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input type="checkbox" id="EnableAudioMemory" is="emby-checkbox" />
+                                <span>Remember Audio Track Selection</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Remember and restore the audio track chosen for each title.
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input type="checkbox" id="EnableSubtitleMemory" is="emby-checkbox" />
+                                <span>Remember Subtitle Track Selection</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Remember and restore the subtitle track chosen for each title (including subtitles disabled).
+                            </div>
+                        </div>
+
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input type="checkbox" id="EnableDebugLogging" is="emby-checkbox" />
+                                <span>Enable Debug Logging</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">
+                                Log detailed stream index capture and rewrite events in the Jellyfin log.
+                            </div>
+                        </div>
+
+                        <button is="emby-button" type="submit" class="raised button-submit block">
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

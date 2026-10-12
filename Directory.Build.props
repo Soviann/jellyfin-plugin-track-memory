@@ -1,0 +1,14 @@
+<Project>
+    <PropertyGroup>
+        <Version>1.0.0.0</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+        <Authors>Soviann</Authors>
+        <Company>Soviann</Company>
+        <Product>Track Memory</Product>
+        <Copyright>Copyright © 2026 Soviann</Copyright>
+        <RepositoryUrl>https://github.com/Soviann/jellyfin-plugin-track-memory</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    </PropertyGroup>
+</Project>
