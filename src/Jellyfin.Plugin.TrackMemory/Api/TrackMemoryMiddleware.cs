@@ -307,7 +307,19 @@ public class TrackMemoryMiddleware
         (int? AudioIndex, int? SubtitleIndex) explicitRequest,
         Configuration.PluginConfiguration? config)
     {
-        var jsonNode = await JsonNode.ParseAsync(responseStream).ConfigureAwait(false);
+        JsonNode? jsonNode;
+        try
+        {
+            jsonNode = await JsonNode.ParseAsync(responseStream).ConfigureAwait(false);
+        }
+        catch (JsonException)
+        {
+            responseStream.Seek(0, SeekOrigin.Begin);
+            using var ms = new MemoryStream();
+            await responseStream.CopyToAsync(ms).ConfigureAwait(false);
+            return ms.ToArray();
+        }
+
         if (jsonNode is not JsonObject rootObj)
         {
             responseStream.Seek(0, SeekOrigin.Begin);
