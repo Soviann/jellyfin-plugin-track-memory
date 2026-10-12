@@ -24,7 +24,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             var appPaths = sp.GetRequiredService<IApplicationPaths>();
             var logger = sp.GetRequiredService<ILogger<TrackMemoryStore>>();
 
-            var pluginDataDir = Path.Combine(appPaths.PluginsConfigurationsPath, "Jellyfin.Plugin.TrackMemory");
+            var pluginDataDir = Path.Combine(appPaths.PluginConfigurationsPath, "Jellyfin.Plugin.TrackMemory");
             return new TrackMemoryStore(pluginDataDir, logger);
         });
 
