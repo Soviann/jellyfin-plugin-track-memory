@@ -1,7 +1,13 @@
 using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Events;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Entities;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.TrackMemory.Services;
@@ -9,12 +15,13 @@ namespace Jellyfin.Plugin.TrackMemory.Services;
 /// <summary>
 /// Service that listens to playback events from ISessionManager to record in-playback audio and subtitle track switches.
 /// </summary>
-public class PlaybackTrackerService : IDisposable
+public class PlaybackTrackerService : IHostedService, IDisposable
 {
     private readonly ISessionManager _sessionManager;
     private readonly ITrackMemoryStore _store;
     private readonly ILogger<PlaybackTrackerService> _logger;
     private bool _disposed;
+    private bool _hooked;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PlaybackTrackerService"/> class.
@@ -30,10 +37,36 @@ public class PlaybackTrackerService : IDisposable
         _sessionManager = sessionManager;
         _store = store;
         _logger = logger;
+    }
 
-        _sessionManager.PlaybackStart += OnPlaybackStart;
-        _sessionManager.PlaybackProgress += OnPlaybackProgress;
-        _sessionManager.PlaybackStopped += OnPlaybackStopped;
+    /// <inheritdoc />
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        if (!_hooked)
+        {
+            _sessionManager.PlaybackStart += OnPlaybackStart;
+            _sessionManager.PlaybackProgress += OnPlaybackProgress;
+            _sessionManager.PlaybackStopped += OnPlaybackStopped;
+            _hooked = true;
+            _logger.LogInformation("PlaybackTrackerService started and hooked into session playback events.");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        if (_hooked)
+        {
+            _sessionManager.PlaybackStart -= OnPlaybackStart;
+            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
+            _sessionManager.PlaybackStopped -= OnPlaybackStopped;
+            _hooked = false;
+            _logger.LogInformation("PlaybackTrackerService stopped.");
+        }
+
+        return Task.CompletedTask;
     }
 
     private void OnPlaybackStart(object? sender, PlaybackProgressEventArgs e)
@@ -97,16 +130,52 @@ public class PlaybackTrackerService : IDisposable
         // Only save if at least one stream is captured
         if (audioIndex.HasValue || subtitleIndex.HasValue)
         {
+            Guid? seriesId = null;
+            if (item is Episode episode && episode.SeriesId != Guid.Empty)
+            {
+                seriesId = episode.SeriesId;
+            }
+
+            string? audioLang = null;
+            string? subLang = null;
+            var streams = item.GetMediaStreams();
+            if (streams != null)
+            {
+                if (audioIndex.HasValue)
+                {
+                    audioLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.Index == audioIndex.Value)?.Language;
+                }
+
+                if (subtitleIndex.HasValue && subtitleIndex.Value >= 0)
+                {
+                    subLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == subtitleIndex.Value)?.Language;
+                }
+            }
+
+            bool subtitleDisabled = subtitleIndex == -1;
+
             _logger.LogDebug(
-                "[{Source}] User {UserId} playing item {ItemId} ('{ItemName}') with Audio={Audio}, Sub={Sub}",
+                "[{Source}] User {UserId} playing item {ItemId} ('{ItemName}', series {SeriesId}) with Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}",
                 sourceEvent,
                 userId,
                 item.Id,
                 item.Name,
+                seriesId,
                 audioIndex,
-                subtitleIndex);
+                audioLang,
+                subtitleIndex,
+                subLang,
+                subtitleDisabled);
 
-            _store.SaveSelection(userId, item.Id, audioIndex, subtitleIndex);
+            _store.SaveSelection(
+                userId,
+                item.Id,
+                seriesId,
+                audioIndex,
+                subtitleIndex,
+                audioLang,
+                subLang,
+                subtitleDisabled);
         }
     }
 
@@ -154,15 +223,51 @@ public class PlaybackTrackerService : IDisposable
 
         if (audioIndex.HasValue || subtitleIndex.HasValue)
         {
+            Guid? seriesId = null;
+            if (item is Episode episode && episode.SeriesId != Guid.Empty)
+            {
+                seriesId = episode.SeriesId;
+            }
+
+            string? audioLang = null;
+            string? subLang = null;
+            var streams = item.GetMediaStreams();
+            if (streams != null)
+            {
+                if (audioIndex.HasValue)
+                {
+                    audioLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.Index == audioIndex.Value)?.Language;
+                }
+
+                if (subtitleIndex.HasValue && subtitleIndex.Value >= 0)
+                {
+                    subLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == subtitleIndex.Value)?.Language;
+                }
+            }
+
+            bool subtitleDisabled = subtitleIndex == -1;
+
             _logger.LogDebug(
-                "[PlaybackStopped] Final recording for user {UserId}, item {ItemId} ('{ItemName}'): Audio={Audio}, Sub={Sub}",
+                "[PlaybackStopped] Final recording for user {UserId}, item {ItemId} ('{ItemName}', series {SeriesId}): Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}",
                 userId,
                 item.Id,
                 item.Name,
+                seriesId,
                 audioIndex,
-                subtitleIndex);
+                audioLang,
+                subtitleIndex,
+                subLang,
+                subtitleDisabled);
 
-            _store.SaveSelection(userId, item.Id, audioIndex, subtitleIndex);
+            _store.SaveSelection(
+                userId,
+                item.Id,
+                seriesId,
+                audioIndex,
+                subtitleIndex,
+                audioLang,
+                subLang,
+                subtitleDisabled);
         }
     }
 
@@ -174,9 +279,14 @@ public class PlaybackTrackerService : IDisposable
             return;
         }
 
-        _sessionManager.PlaybackStart -= OnPlaybackStart;
-        _sessionManager.PlaybackProgress -= OnPlaybackProgress;
-        _sessionManager.PlaybackStopped -= OnPlaybackStopped;
+        if (_hooked)
+        {
+            _sessionManager.PlaybackStart -= OnPlaybackStart;
+            _sessionManager.PlaybackProgress -= OnPlaybackProgress;
+            _sessionManager.PlaybackStopped -= OnPlaybackStopped;
+            _hooked = false;
+        }
+
         _disposed = true;
         GC.SuppressFinalize(this);
     }

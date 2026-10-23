@@ -1,7 +1,7 @@
 {
   "name": "Track Memory",
   "guid": "5180f998-b8fc-41e0-8c6e-005f4564ec7a",
-  "version": "1.0.0.0",
+  "version": "1.1.0.0",
   "description": "Remembers chosen audio and subtitle tracks per title across sessions and rewatches.",
   "overview": "Automatically persists and applies your preferred audio and subtitle selections for movies and episodes, including in-playback changes and details page pre-selections.",
   "owner": "Soviann",

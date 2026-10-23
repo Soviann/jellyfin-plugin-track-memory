@@ -8,6 +8,14 @@
     "category": "Playback",
     "versions": [
       {
+        "version": "1.1.0.0",
+        "changelog": "- Series-level track memory inheritance: remember audio and subtitle languages across TV series episodes\n- Fix lifecycle by implementing IHostedService on PlaybackTrackerService\n- Fix JSON parsing for string-encoded stream indices from Smart TV (webOS) clients\n- Added language synonym matching (ISO-639 equivalents)",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/Soviann/jellyfin-plugin-track-memory/releases/download/v1.1.0.0/TrackMemory_1.1.0.0.zip",
+        "checksum": "e1358347870237dca76305ae90ad39ff",
+        "timestamp": "2026-10-23T10:00:00Z"
+      },
+      {
         "version": "1.0.0.0",
         "changelog": "- Automatically remembers audio and subtitle track selections per title across sessions and rewatches\n- Intercepts pre-playback track selections from details page\n- In-playback dynamic stream change recording via ISessionManager events\n- Transparent server-side DefaultAudioStreamIndex and DefaultSubtitleStreamIndex injection into PlaybackInfo responses\n- Support for compressed payloads (gzip, brotli, deflate) on Smart TV (webOS) clients",
         "targetAbi": "10.10.0.0",

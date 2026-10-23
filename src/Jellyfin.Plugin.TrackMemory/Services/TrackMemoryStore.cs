@@ -51,9 +51,20 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
     /// <inheritdoc />
     public TrackSelection? GetSelection(Guid userId, Guid itemId)
     {
+        return GetSelection(userId, itemId, null);
+    }
+
+    /// <inheritdoc />
+    public TrackSelection? GetSelection(Guid userId, Guid itemId, Guid? seriesId = null)
+    {
         if (_cache.TryGetValue((userId, itemId), out var selection))
         {
             return selection;
+        }
+
+        if (seriesId.HasValue && seriesId.Value != Guid.Empty && _cache.TryGetValue((userId, seriesId.Value), out var seriesSelection))
+        {
+            return seriesSelection;
         }
 
         return null;
@@ -62,26 +73,87 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
     /// <inheritdoc />
     public void SaveSelection(Guid userId, Guid itemId, int? audioStreamIndex, int? subtitleStreamIndex)
     {
-        var key = (userId, itemId);
+        SaveSelection(userId, itemId, null, audioStreamIndex, subtitleStreamIndex, null, null, subtitleStreamIndex == -1);
+    }
+
+    /// <inheritdoc />
+    public void SaveSelection(
+        Guid userId,
+        Guid itemId,
+        Guid? seriesId,
+        int? audioStreamIndex,
+        int? subtitleStreamIndex,
+        string? audioLanguage = null,
+        string? subtitleLanguage = null,
+        bool subtitleDisabled = false)
+    {
+        bool effectiveDisabled = subtitleDisabled || subtitleStreamIndex == -1;
+
+        SaveSingleSelection(userId, itemId, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, effectiveDisabled);
+
+        if (seriesId.HasValue && seriesId.Value != Guid.Empty && seriesId.Value != itemId)
+        {
+            SaveSingleSelection(userId, seriesId.Value, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, effectiveDisabled);
+        }
+    }
+
+    private void SaveSingleSelection(
+        Guid userId,
+        Guid targetId,
+        int? audioStreamIndex,
+        int? subtitleStreamIndex,
+        string? audioLanguage,
+        string? subtitleLanguage,
+        bool subtitleDisabled)
+    {
+        var key = (userId, targetId);
 
         _cache.AddOrUpdate(
             key,
             _ =>
             {
                 _isDirty = true;
-                _logger.LogDebug("Recorded new track selection for user {UserId}, item {ItemId}: Audio={Audio}, Sub={Sub}", userId, itemId, audioStreamIndex, subtitleStreamIndex);
-                return new TrackSelection(itemId, audioStreamIndex, subtitleStreamIndex);
+                _logger.LogDebug(
+                    "Recorded new track selection for user {UserId}, target {TargetId}: Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}",
+                    userId,
+                    targetId,
+                    audioStreamIndex,
+                    audioLanguage,
+                    subtitleStreamIndex,
+                    subtitleLanguage,
+                    subtitleDisabled);
+
+                return new TrackSelection(targetId, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, subtitleDisabled);
             },
             (_, existing) =>
             {
-                if (existing.AudioStreamIndex != audioStreamIndex || existing.SubtitleStreamIndex != subtitleStreamIndex)
+                var newAudioIndex = audioStreamIndex ?? existing.AudioStreamIndex;
+                var newSubIndex = subtitleStreamIndex ?? existing.SubtitleStreamIndex;
+                var newAudioLang = !string.IsNullOrEmpty(audioLanguage) ? audioLanguage : existing.AudioLanguage;
+                var newSubLang = subtitleDisabled ? null : (!string.IsNullOrEmpty(subtitleLanguage) ? subtitleLanguage : existing.SubtitleLanguage);
+
+                bool changed = existing.AudioStreamIndex != newAudioIndex
+                    || existing.SubtitleStreamIndex != newSubIndex
+                    || !string.Equals(existing.AudioLanguage, newAudioLang, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(existing.SubtitleLanguage, newSubLang, StringComparison.OrdinalIgnoreCase)
+                    || existing.SubtitleDisabled != subtitleDisabled;
+
+                if (changed)
                 {
-                    existing.AudioStreamIndex = audioStreamIndex;
-                    existing.SubtitleStreamIndex = subtitleStreamIndex;
-                    existing.UpdatedAtUtc = DateTime.UtcNow;
                     _isDirty = true;
-                    _logger.LogDebug("Updated track selection for user {UserId}, item {ItemId}: Audio={Audio}, Sub={Sub}", userId, itemId, audioStreamIndex, subtitleStreamIndex);
+                    _logger.LogDebug(
+                        "Updated track selection for user {UserId}, target {TargetId}: Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}",
+                        userId,
+                        targetId,
+                        newAudioIndex,
+                        newAudioLang,
+                        newSubIndex,
+                        newSubLang,
+                        subtitleDisabled);
+
+                    return new TrackSelection(targetId, newAudioIndex, newSubIndex, newAudioLang, newSubLang, subtitleDisabled);
                 }
+
                 return existing;
             });
     }
@@ -111,6 +183,9 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
                     ItemId = kvp.Key.ItemId,
                     AudioStreamIndex = kvp.Value.AudioStreamIndex,
                     SubtitleStreamIndex = kvp.Value.SubtitleStreamIndex,
+                    AudioLanguage = kvp.Value.AudioLanguage,
+                    SubtitleLanguage = kvp.Value.SubtitleLanguage,
+                    SubtitleDisabled = kvp.Value.SubtitleDisabled,
                     UpdatedAtUtc = kvp.Value.UpdatedAtUtc
                 });
             }
@@ -164,7 +239,13 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
             {
                 foreach (var rec in records)
                 {
-                    var selection = new TrackSelection(rec.ItemId, rec.AudioStreamIndex, rec.SubtitleStreamIndex)
+                    var selection = new TrackSelection(
+                        rec.ItemId,
+                        rec.AudioStreamIndex,
+                        rec.SubtitleStreamIndex,
+                        rec.AudioLanguage,
+                        rec.SubtitleLanguage,
+                        rec.SubtitleDisabled)
                     {
                         UpdatedAtUtc = rec.UpdatedAtUtc
                     };
@@ -217,6 +298,9 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
         public Guid ItemId { get; set; }
         public int? AudioStreamIndex { get; set; }
         public int? SubtitleStreamIndex { get; set; }
+        public string? AudioLanguage { get; set; }
+        public string? SubtitleLanguage { get; set; }
+        public bool SubtitleDisabled { get; set; }
         public DateTime UpdatedAtUtc { get; set; }
     }
 }

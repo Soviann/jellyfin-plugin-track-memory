@@ -3,12 +3,12 @@ using System;
 namespace Jellyfin.Plugin.TrackMemory.Domain;
 
 /// <summary>
-/// Represents a user's remembered audio and subtitle stream selection for a specific media item.
+/// Represents a user's remembered audio and subtitle stream selection for a specific media item or series.
 /// </summary>
 public class TrackSelection
 {
     /// <summary>
-    /// Gets or sets the Jellyfin media item identifier.
+    /// Gets or sets the Jellyfin media item identifier (episode, movie, or series).
     /// </summary>
     public Guid ItemId { get; set; }
 
@@ -21,6 +21,21 @@ public class TrackSelection
     /// Gets or sets the preferred subtitle stream index (-1 or null represents subtitles disabled).
     /// </summary>
     public int? SubtitleStreamIndex { get; set; }
+
+    /// <summary>
+    /// Gets or sets the preferred audio stream language code (e.g. "eng", "fre"), if known.
+    /// </summary>
+    public string? AudioLanguage { get; set; }
+
+    /// <summary>
+    /// Gets or sets the preferred subtitle stream language code (e.g. "eng", "fre"), if known.
+    /// </summary>
+    public string? SubtitleLanguage { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether subtitles are explicitly disabled.
+    /// </summary>
+    public bool SubtitleDisabled { get; set; }
 
     /// <summary>
     /// Gets or sets the UTC timestamp when this selection was last updated.
@@ -40,11 +55,23 @@ public class TrackSelection
     /// <param name="itemId">The media item id.</param>
     /// <param name="audioStreamIndex">The audio stream index.</param>
     /// <param name="subtitleStreamIndex">The subtitle stream index.</param>
-    public TrackSelection(Guid itemId, int? audioStreamIndex, int? subtitleStreamIndex)
+    /// <param name="audioLanguage">The audio stream language code.</param>
+    /// <param name="subtitleLanguage">The subtitle stream language code.</param>
+    /// <param name="subtitleDisabled">Whether subtitles are explicitly disabled.</param>
+    public TrackSelection(
+        Guid itemId,
+        int? audioStreamIndex,
+        int? subtitleStreamIndex,
+        string? audioLanguage = null,
+        string? subtitleLanguage = null,
+        bool subtitleDisabled = false)
     {
         ItemId = itemId;
         AudioStreamIndex = audioStreamIndex;
         SubtitleStreamIndex = subtitleStreamIndex;
+        AudioLanguage = audioLanguage;
+        SubtitleLanguage = subtitleLanguage;
+        SubtitleDisabled = subtitleDisabled || subtitleStreamIndex == -1;
         UpdatedAtUtc = DateTime.UtcNow;
     }
 }

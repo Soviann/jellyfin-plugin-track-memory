@@ -144,4 +144,69 @@ public class TrackMemoryMiddlewareTests
 
         Assert.Equal(invalidBytes, resultBytes);
     }
+
+    [Fact]
+    public async Task RewritePlaybackInfoResponseAsync_WithLanguages_MatchesStreamsByLanguageCode()
+    {
+        // Nominal: When remembered selection has language codes, matching stream index is resolved
+        // In SamplePlaybackInfoJson: stream 2 is fre audio, stream 3 is fre sub
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(SamplePlaybackInfoJson));
+        var config = new PluginConfiguration();
+        var remembered = new TrackSelection(Guid.NewGuid(), audioStreamIndex: null, subtitleStreamIndex: null, audioLanguage: "fre", subtitleLanguage: "fre");
+
+        var resultBytes = await TrackMemoryMiddleware.RewritePlaybackInfoResponseAsync(
+            stream,
+            remembered: remembered,
+            explicitRequest: (null, null),
+            config: config);
+
+        var json = Encoding.UTF8.GetString(resultBytes);
+        var node = JsonNode.Parse(json);
+        Assert.NotNull(node);
+
+        var defaultAudio = node["MediaSources"]?[0]?["DefaultAudioStreamIndex"]?.GetValue<int>();
+        var defaultSub = node["MediaSources"]?[0]?["DefaultSubtitleStreamIndex"]?.GetValue<int>();
+
+        Assert.Equal(2, defaultAudio);
+        Assert.Equal(3, defaultSub);
+    }
+
+    [Fact]
+    public async Task RewritePlaybackInfoResponseAsync_WithSubtitleDisabled_SetsDefaultSubtitleStreamIndexToMinusOne()
+    {
+        // Boundary: SubtitleDisabled flag forces DefaultSubtitleStreamIndex to -1
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(SamplePlaybackInfoJson));
+        var config = new PluginConfiguration();
+        var remembered = new TrackSelection(Guid.NewGuid(), audioStreamIndex: 1, subtitleStreamIndex: 3, subtitleDisabled: true);
+
+        var resultBytes = await TrackMemoryMiddleware.RewritePlaybackInfoResponseAsync(
+            stream,
+            remembered: remembered,
+            explicitRequest: (null, null),
+            config: config);
+
+        var json = Encoding.UTF8.GetString(resultBytes);
+        var node = JsonNode.Parse(json);
+        Assert.NotNull(node);
+
+        var defaultSub = node["MediaSources"]?[0]?["DefaultSubtitleStreamIndex"]?.GetValue<int>();
+        Assert.Equal(-1, defaultSub);
+    }
+
+    [Fact]
+    public void ParseStreamIndicesFromJson_HandlesBothNumbersAndStrings()
+    {
+        // Error / Boundary regression test for InvalidOperationException:
+        // Client sending strings {"AudioStreamIndex": "2", "SubtitleStreamIndex": "3"}
+        var jsonWithStrings = @"{ ""AudioStreamIndex"": ""2"", ""SubtitleStreamIndex"": ""3"" }";
+        var (audio1, sub1) = TrackMemoryMiddleware.ParseJsonStreamIndices(jsonWithStrings);
+        Assert.Equal(2, audio1);
+        Assert.Equal(3, sub1);
+
+        // Standard integer JSON
+        var jsonWithNumbers = @"{ ""AudioStreamIndex"": 1, ""SubtitleStreamIndex"": -1 }";
+        var (audio2, sub2) = TrackMemoryMiddleware.ParseJsonStreamIndices(jsonWithNumbers);
+        Assert.Equal(1, audio2);
+        Assert.Equal(-1, sub2);
+    }
 }

@@ -28,8 +28,9 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
             return new TrackMemoryStore(pluginDataDir, logger);
         });
 
-        // Register the real-time playback tracker service (instantiated as singleton)
+        // Register the real-time playback tracker service as singleton and hosted background service
         serviceCollection.AddSingleton<PlaybackTrackerService>();
+        serviceCollection.AddHostedService(sp => sp.GetRequiredService<PlaybackTrackerService>());
 
         // Register the startup filter to insert TrackMemoryMiddleware into ASP.NET Core pipeline
         serviceCollection.AddTransient<IStartupFilter, StartupFilter>();

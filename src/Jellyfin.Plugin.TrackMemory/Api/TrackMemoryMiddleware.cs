@@ -1,12 +1,15 @@
 using System;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.TrackMemory.Domain;
 using Jellyfin.Plugin.TrackMemory.Services;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 
@@ -23,6 +26,7 @@ public class TrackMemoryMiddleware
     private readonly ILogger<TrackMemoryMiddleware> _logger;
     private readonly ITrackMemoryStore _store;
     private readonly IUserManager _userManager;
+    private readonly ILibraryManager _libraryManager;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TrackMemoryMiddleware"/> class.
@@ -31,16 +35,19 @@ public class TrackMemoryMiddleware
     /// <param name="logger">The logger instance.</param>
     /// <param name="store">The track memory store.</param>
     /// <param name="userManager">The user manager.</param>
+    /// <param name="libraryManager">The library manager.</param>
     public TrackMemoryMiddleware(
         RequestDelegate next,
         ILogger<TrackMemoryMiddleware> logger,
         ITrackMemoryStore store,
-        IUserManager userManager)
+        IUserManager userManager,
+        ILibraryManager libraryManager)
     {
         _next = next;
         _logger = logger;
         _store = store;
         _userManager = userManager;
+        _libraryManager = libraryManager;
     }
 
     /// <summary>
@@ -66,6 +73,13 @@ public class TrackMemoryMiddleware
 
         var userId = ExtractUserId(context);
 
+        var item = _libraryManager.GetItemById(itemId);
+        Guid? seriesId = null;
+        if (item is Episode episode && episode.SeriesId != Guid.Empty)
+        {
+            seriesId = episode.SeriesId;
+        }
+
         // 1. Inspect request for explicit track selections (e.g. from item details page dropdown)
         var explicitRequestIndices = await InspectRequestForOverridesAsync(context, userId, itemId).ConfigureAwait(false);
 
@@ -73,14 +87,43 @@ public class TrackMemoryMiddleware
         // it takes priority and will be respected by downstream Jellyfin, and we record it now.
         if (userId != Guid.Empty && (explicitRequestIndices.AudioIndex.HasValue || explicitRequestIndices.SubtitleIndex.HasValue))
         {
+            string? audioLang = null;
+            string? subLang = null;
+            bool subDisabled = explicitRequestIndices.SubtitleIndex == -1;
+
+            if (item != null)
+            {
+                var streams = item.GetMediaStreams();
+                if (explicitRequestIndices.AudioIndex.HasValue)
+                {
+                    audioLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.Index == explicitRequestIndices.AudioIndex.Value)?.Language;
+                }
+
+                if (explicitRequestIndices.SubtitleIndex.HasValue && explicitRequestIndices.SubtitleIndex.Value >= 0)
+                {
+                    subLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == explicitRequestIndices.SubtitleIndex.Value)?.Language;
+                }
+            }
+
             _logger.LogDebug(
-                "Captured explicit track selection from request for user {UserId}, item {ItemId}: Audio={Audio}, Sub={Sub}",
+                "Captured explicit track selection from request for user {UserId}, item {ItemId} (series {SeriesId}): Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang})",
                 userId,
                 itemId,
+                seriesId,
                 explicitRequestIndices.AudioIndex,
-                explicitRequestIndices.SubtitleIndex);
+                audioLang,
+                explicitRequestIndices.SubtitleIndex,
+                subLang);
 
-            _store.SaveSelection(userId, itemId, explicitRequestIndices.AudioIndex, explicitRequestIndices.SubtitleIndex);
+            _store.SaveSelection(
+                userId,
+                itemId,
+                seriesId,
+                explicitRequestIndices.AudioIndex,
+                explicitRequestIndices.SubtitleIndex,
+                audioLang,
+                subLang,
+                subDisabled);
         }
 
         // 2. Intercept response to rewrite DefaultAudioStreamIndex / DefaultSubtitleStreamIndex
@@ -120,7 +163,7 @@ public class TrackMemoryMiddleware
                 byte[] modifiedJsonBytes;
                 try
                 {
-                    var remembered = userId != Guid.Empty ? _store.GetSelection(userId, itemId) : null;
+                    var remembered = userId != Guid.Empty ? _store.GetSelection(userId, itemId, seriesId) : null;
                     modifiedJsonBytes = await RewritePlaybackInfoResponseAsync(
                         decompressedStream,
                         remembered,
@@ -269,23 +312,14 @@ public class TrackMemoryMiddleware
                 var body = await reader.ReadToEndAsync().ConfigureAwait(false);
                 context.Request.Body.Position = 0;
 
-                if (!string.IsNullOrWhiteSpace(body))
+                var (bodyAudio, bodySub) = ParseJsonStreamIndices(body);
+                if (bodyAudio.HasValue)
                 {
-                    using var doc = JsonDocument.Parse(body);
-                    if (doc.RootElement.TryGetProperty("AudioStreamIndex", out var jsonAudio) && jsonAudio.TryGetInt32(out var jsonAIdx))
-                    {
-                        audioIndex = jsonAIdx;
-                    }
-
-                    if (doc.RootElement.TryGetProperty("SubtitleStreamIndex", out var jsonSub) && jsonSub.TryGetInt32(out var jsonSIdx))
-                    {
-                        subtitleIndex = jsonSIdx;
-                    }
-
-                    if (userId == Guid.Empty && doc.RootElement.TryGetProperty("UserId", out var jsonUser) && jsonUser.TryGetGuid(out var jsonUGuid))
-                    {
-                        // Note: userId can also be picked up from the body
-                    }
+                    audioIndex = bodyAudio;
+                }
+                if (bodySub.HasValue)
+                {
+                    subtitleIndex = bodySub;
                 }
             }
             catch (Exception ex)
@@ -293,6 +327,56 @@ public class TrackMemoryMiddleware
                 _logger.LogWarning(ex, "Failed to parse PlaybackInfo POST request body");
                 context.Request.Body.Position = 0;
             }
+        }
+
+        return (audioIndex, subtitleIndex);
+    }
+
+    /// <summary>
+    /// Safely parses AudioStreamIndex and SubtitleStreamIndex from a JSON string, accepting either numbers or strings.
+    /// </summary>
+    /// <param name="json">The JSON payload.</param>
+    /// <returns>A tuple with audio and subtitle stream indices if present.</returns>
+    public static (int? AudioIndex, int? SubtitleIndex) ParseJsonStreamIndices(string json)
+    {
+        int? audioIndex = null;
+        int? subtitleIndex = null;
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return (null, null);
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("AudioStreamIndex", out var jsonAudio))
+            {
+                if (jsonAudio.ValueKind == JsonValueKind.Number && jsonAudio.TryGetInt32(out var jsonAIdx))
+                {
+                    audioIndex = jsonAIdx;
+                }
+                else if (jsonAudio.ValueKind == JsonValueKind.String && int.TryParse(jsonAudio.GetString(), out var strAIdx))
+                {
+                    audioIndex = strAIdx;
+                }
+            }
+
+            if (doc.RootElement.TryGetProperty("SubtitleStreamIndex", out var jsonSub))
+            {
+                if (jsonSub.ValueKind == JsonValueKind.Number && jsonSub.TryGetInt32(out var jsonSIdx))
+                {
+                    subtitleIndex = jsonSIdx;
+                }
+                else if (jsonSub.ValueKind == JsonValueKind.String && int.TryParse(jsonSub.GetString(), out var strSIdx))
+                {
+                    subtitleIndex = strSIdx;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore parse errors, return what was found or null
         }
 
         return (audioIndex, subtitleIndex);
@@ -345,20 +429,126 @@ public class TrackMemoryMiddleware
                     continue;
                 }
 
-                // Only rewrite Audio if request did NOT explicitly specify one
-                if (enableAudio && !explicitRequest.AudioIndex.HasValue && remembered.AudioStreamIndex.HasValue)
+                JsonArray? streamsArray = null;
+                if (sourceObj.TryGetPropertyValue("MediaStreams", out var msNode) && msNode is JsonArray arr)
                 {
-                    sourceObj["DefaultAudioStreamIndex"] = remembered.AudioStreamIndex.Value;
+                    streamsArray = arr;
                 }
 
-                // Only rewrite Subtitle if request did NOT explicitly specify one
-                if (enableSubtitle && !explicitRequest.SubtitleIndex.HasValue && remembered.SubtitleStreamIndex.HasValue)
+                // Rewrite Audio if request did NOT explicitly specify one
+                if (enableAudio && !explicitRequest.AudioIndex.HasValue)
                 {
-                    sourceObj["DefaultSubtitleStreamIndex"] = remembered.SubtitleStreamIndex.Value;
+                    int? resolvedAudio = null;
+                    if (!string.IsNullOrEmpty(remembered.AudioLanguage) && streamsArray != null)
+                    {
+                        resolvedAudio = FindStreamIndexByLanguage(streamsArray, "Audio", remembered.AudioLanguage);
+                    }
+
+                    resolvedAudio ??= remembered.AudioStreamIndex;
+
+                    if (resolvedAudio.HasValue)
+                    {
+                        sourceObj["DefaultAudioStreamIndex"] = resolvedAudio.Value;
+                    }
+                }
+
+                // Rewrite Subtitle if request did NOT explicitly specify one
+                if (enableSubtitle && !explicitRequest.SubtitleIndex.HasValue)
+                {
+                    if (remembered.SubtitleDisabled || remembered.SubtitleStreamIndex == -1)
+                    {
+                        sourceObj["DefaultSubtitleStreamIndex"] = -1;
+                    }
+                    else
+                    {
+                        int? resolvedSub = null;
+                        if (!string.IsNullOrEmpty(remembered.SubtitleLanguage) && streamsArray != null)
+                        {
+                            resolvedSub = FindStreamIndexByLanguage(streamsArray, "Subtitle", remembered.SubtitleLanguage);
+                        }
+
+                        resolvedSub ??= remembered.SubtitleStreamIndex;
+
+                        if (resolvedSub.HasValue)
+                        {
+                            sourceObj["DefaultSubtitleStreamIndex"] = resolvedSub.Value;
+                        }
+                    }
                 }
             }
         }
 
         return JsonSerializer.SerializeToUtf8Bytes(rootObj, new JsonSerializerOptions { WriteIndented = false });
+    }
+
+    private static int? FindStreamIndexByLanguage(JsonArray streams, string streamType, string languageCode)
+    {
+        foreach (var s in streams)
+        {
+            if (s is not JsonObject sObj)
+            {
+                continue;
+            }
+
+            var type = sObj["Type"]?.GetValue<string>();
+            if (!string.Equals(type, streamType, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var lang = sObj["Language"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(lang))
+            {
+                continue;
+            }
+
+            if (AreLanguagesEquivalent(lang, languageCode))
+            {
+                if (sObj["Index"]?.GetValue<int>() is int idx)
+                {
+                    return idx;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool AreLanguagesEquivalent(string a, string b)
+    {
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if ((a.Length >= 2 && b.Length >= 2 && a.StartsWith(b, StringComparison.OrdinalIgnoreCase))
+            || (b.Length >= 2 && a.Length >= 2 && b.StartsWith(a, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        // Common bibliographic vs terminological or non-prefix ISO-639 equivalents
+        ReadOnlySpan<(string, string)> synonyms =
+        [
+            ("fre", "fra"),
+            ("ger", "deu"),
+            ("jpn", "ja"),
+            ("spa", "es"),
+            ("chi", "zho"),
+            ("dut", "nld"),
+            ("cze", "ces"),
+            ("gre", "ell")
+        ];
+
+        foreach (var (synA, synB) in synonyms)
+        {
+            if ((string.Equals(a, synA, StringComparison.OrdinalIgnoreCase) && string.Equals(b, synB, StringComparison.OrdinalIgnoreCase))
+                || (string.Equals(a, synB, StringComparison.OrdinalIgnoreCase) && string.Equals(b, synA, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
