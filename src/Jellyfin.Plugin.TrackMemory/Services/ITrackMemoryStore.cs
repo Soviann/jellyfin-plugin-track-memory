@@ -38,6 +38,8 @@ public interface ITrackMemoryStore
     /// <param name="audioLanguage">The audio language code (e.g. "eng", "fre").</param>
     /// <param name="subtitleLanguage">The subtitle language code.</param>
     /// <param name="subtitleDisabled">Whether subtitles are explicitly disabled.</param>
+    /// <param name="subtitleIsHearingImpaired">Whether the preferred subtitle is Hearing Impaired / SDH.</param>
+    /// <param name="subtitleIsForced">Whether the preferred subtitle is Forced.</param>
     void SaveSelection(
         Guid userId,
         Guid itemId,
@@ -46,7 +48,9 @@ public interface ITrackMemoryStore
         int? subtitleStreamIndex,
         string? audioLanguage = null,
         string? subtitleLanguage = null,
-        bool subtitleDisabled = false);
+        bool subtitleDisabled = false,
+        bool? subtitleIsHearingImpaired = null,
+        bool? subtitleIsForced = null);
 
     /// <summary>
     /// Flushes all in-memory changes to the underlying storage file.

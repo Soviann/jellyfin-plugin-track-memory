@@ -138,6 +138,8 @@ public class PlaybackTrackerService : IHostedService, IDisposable
 
             string? audioLang = null;
             string? subLang = null;
+            bool? isHearingImpaired = null;
+            bool? isForced = null;
             var streams = item.GetMediaStreams();
             if (streams != null)
             {
@@ -148,14 +150,17 @@ public class PlaybackTrackerService : IHostedService, IDisposable
 
                 if (subtitleIndex.HasValue && subtitleIndex.Value >= 0)
                 {
-                    subLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == subtitleIndex.Value)?.Language;
+                    var subStream = streams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == subtitleIndex.Value);
+                    subLang = subStream?.Language;
+                    isHearingImpaired = subStream?.IsHearingImpaired;
+                    isForced = subStream?.IsForced;
                 }
             }
 
             bool subtitleDisabled = subtitleIndex == -1;
 
             _logger.LogDebug(
-                "[{Source}] User {UserId} playing item {ItemId} ('{ItemName}', series {SeriesId}) with Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}",
+                "[{Source}] User {UserId} playing item {ItemId} ('{ItemName}', series {SeriesId}) with Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}, SDH={SDH}, Forced={Forced}",
                 sourceEvent,
                 userId,
                 item.Id,
@@ -165,7 +170,9 @@ public class PlaybackTrackerService : IHostedService, IDisposable
                 audioLang,
                 subtitleIndex,
                 subLang,
-                subtitleDisabled);
+                subtitleDisabled,
+                isHearingImpaired,
+                isForced);
 
             _store.SaveSelection(
                 userId,
@@ -175,7 +182,9 @@ public class PlaybackTrackerService : IHostedService, IDisposable
                 subtitleIndex,
                 audioLang,
                 subLang,
-                subtitleDisabled);
+                subtitleDisabled,
+                isHearingImpaired,
+                isForced);
         }
     }
 
@@ -231,6 +240,8 @@ public class PlaybackTrackerService : IHostedService, IDisposable
 
             string? audioLang = null;
             string? subLang = null;
+            bool? isHearingImpaired = null;
+            bool? isForced = null;
             var streams = item.GetMediaStreams();
             if (streams != null)
             {
@@ -241,14 +252,17 @@ public class PlaybackTrackerService : IHostedService, IDisposable
 
                 if (subtitleIndex.HasValue && subtitleIndex.Value >= 0)
                 {
-                    subLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == subtitleIndex.Value)?.Language;
+                    var subStream = streams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == subtitleIndex.Value);
+                    subLang = subStream?.Language;
+                    isHearingImpaired = subStream?.IsHearingImpaired;
+                    isForced = subStream?.IsForced;
                 }
             }
 
             bool subtitleDisabled = subtitleIndex == -1;
 
             _logger.LogDebug(
-                "[PlaybackStopped] Final recording for user {UserId}, item {ItemId} ('{ItemName}', series {SeriesId}): Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}",
+                "[PlaybackStopped] Final recording for user {UserId}, item {ItemId} ('{ItemName}', series {SeriesId}): Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}, SDH={SDH}, Forced={Forced}",
                 userId,
                 item.Id,
                 item.Name,
@@ -257,7 +271,9 @@ public class PlaybackTrackerService : IHostedService, IDisposable
                 audioLang,
                 subtitleIndex,
                 subLang,
-                subtitleDisabled);
+                subtitleDisabled,
+                isHearingImpaired,
+                isForced);
 
             _store.SaveSelection(
                 userId,
@@ -267,7 +283,9 @@ public class PlaybackTrackerService : IHostedService, IDisposable
                 subtitleIndex,
                 audioLang,
                 subLang,
-                subtitleDisabled);
+                subtitleDisabled,
+                isHearingImpaired,
+                isForced);
         }
     }
 

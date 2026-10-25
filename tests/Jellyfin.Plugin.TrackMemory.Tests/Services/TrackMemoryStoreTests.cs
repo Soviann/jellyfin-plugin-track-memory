@@ -200,4 +200,45 @@ public class TrackMemoryStoreTests : IDisposable
             Assert.False(fallback.SubtitleDisabled);
         }
     }
+
+    [Fact]
+    public async Task SaveSelection_WithSubtitleVariants_PersistsHearingImpairedAndForcedFlags()
+    {
+        // Nominal: Subtitle SDH (Hearing Impaired) and Forced variants are preserved in cache and persisted
+        var userId = Guid.NewGuid();
+        var itemId = Guid.NewGuid();
+        var seriesId = Guid.NewGuid();
+
+        using (var store1 = new TrackMemoryStore(_testDir, NullLogger<TrackMemoryStore>.Instance, autoFlushIntervalMs: 0))
+        {
+            store1.SaveSelection(
+                userId,
+                itemId,
+                seriesId: seriesId,
+                audioStreamIndex: 1,
+                subtitleStreamIndex: 7,
+                audioLanguage: "eng",
+                subtitleLanguage: "eng",
+                subtitleDisabled: false,
+                subtitleIsHearingImpaired: true,
+                subtitleIsForced: false);
+
+            var itemSelection = store1.GetSelection(userId, itemId);
+            Assert.NotNull(itemSelection);
+            Assert.True(itemSelection.SubtitleIsHearingImpaired);
+            Assert.False(itemSelection.SubtitleIsForced);
+
+            await store1.FlushAsync();
+        }
+
+        using (var store2 = new TrackMemoryStore(_testDir, NullLogger<TrackMemoryStore>.Instance, autoFlushIntervalMs: 0))
+        {
+            var otherEpisodeId = Guid.NewGuid();
+            var fallback = store2.GetSelection(userId, otherEpisodeId, seriesId);
+            Assert.NotNull(fallback);
+            Assert.Equal("eng", fallback.SubtitleLanguage);
+            Assert.True(fallback.SubtitleIsHearingImpaired);
+            Assert.False(fallback.SubtitleIsForced);
+        }
+    }
 }

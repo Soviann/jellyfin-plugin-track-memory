@@ -85,15 +85,17 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
         int? subtitleStreamIndex,
         string? audioLanguage = null,
         string? subtitleLanguage = null,
-        bool subtitleDisabled = false)
+        bool subtitleDisabled = false,
+        bool? subtitleIsHearingImpaired = null,
+        bool? subtitleIsForced = null)
     {
         bool effectiveDisabled = subtitleDisabled || subtitleStreamIndex == -1;
 
-        SaveSingleSelection(userId, itemId, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, effectiveDisabled);
+        SaveSingleSelection(userId, itemId, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, effectiveDisabled, subtitleIsHearingImpaired, subtitleIsForced);
 
         if (seriesId.HasValue && seriesId.Value != Guid.Empty && seriesId.Value != itemId)
         {
-            SaveSingleSelection(userId, seriesId.Value, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, effectiveDisabled);
+            SaveSingleSelection(userId, seriesId.Value, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, effectiveDisabled, subtitleIsHearingImpaired, subtitleIsForced);
         }
     }
 
@@ -104,7 +106,9 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
         int? subtitleStreamIndex,
         string? audioLanguage,
         string? subtitleLanguage,
-        bool subtitleDisabled)
+        bool subtitleDisabled,
+        bool? subtitleIsHearingImpaired,
+        bool? subtitleIsForced)
     {
         var key = (userId, targetId);
 
@@ -114,16 +118,18 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
             {
                 _isDirty = true;
                 _logger.LogDebug(
-                    "Recorded new track selection for user {UserId}, target {TargetId}: Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}",
+                    "Recorded new track selection for user {UserId}, target {TargetId}: Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}, SDH={SDH}, Forced={Forced}",
                     userId,
                     targetId,
                     audioStreamIndex,
                     audioLanguage,
                     subtitleStreamIndex,
                     subtitleLanguage,
-                    subtitleDisabled);
+                    subtitleDisabled,
+                    subtitleIsHearingImpaired,
+                    subtitleIsForced);
 
-                return new TrackSelection(targetId, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, subtitleDisabled);
+                return new TrackSelection(targetId, audioStreamIndex, subtitleStreamIndex, audioLanguage, subtitleLanguage, subtitleDisabled, subtitleIsHearingImpaired, subtitleIsForced);
             },
             (_, existing) =>
             {
@@ -131,27 +137,33 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
                 var newSubIndex = subtitleStreamIndex ?? existing.SubtitleStreamIndex;
                 var newAudioLang = !string.IsNullOrEmpty(audioLanguage) ? audioLanguage : existing.AudioLanguage;
                 var newSubLang = subtitleDisabled ? null : (!string.IsNullOrEmpty(subtitleLanguage) ? subtitleLanguage : existing.SubtitleLanguage);
+                var newIsHearingImpaired = subtitleDisabled ? null : (subtitleIsHearingImpaired ?? existing.SubtitleIsHearingImpaired);
+                var newIsForced = subtitleDisabled ? null : (subtitleIsForced ?? existing.SubtitleIsForced);
 
                 bool changed = existing.AudioStreamIndex != newAudioIndex
                     || existing.SubtitleStreamIndex != newSubIndex
                     || !string.Equals(existing.AudioLanguage, newAudioLang, StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(existing.SubtitleLanguage, newSubLang, StringComparison.OrdinalIgnoreCase)
-                    || existing.SubtitleDisabled != subtitleDisabled;
+                    || existing.SubtitleDisabled != subtitleDisabled
+                    || existing.SubtitleIsHearingImpaired != newIsHearingImpaired
+                    || existing.SubtitleIsForced != newIsForced;
 
                 if (changed)
                 {
                     _isDirty = true;
                     _logger.LogDebug(
-                        "Updated track selection for user {UserId}, target {TargetId}: Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}",
+                        "Updated track selection for user {UserId}, target {TargetId}: Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang}), SubDisabled={SubDisabled}, SDH={SDH}, Forced={Forced}",
                         userId,
                         targetId,
                         newAudioIndex,
                         newAudioLang,
                         newSubIndex,
                         newSubLang,
-                        subtitleDisabled);
+                        subtitleDisabled,
+                        newIsHearingImpaired,
+                        newIsForced);
 
-                    return new TrackSelection(targetId, newAudioIndex, newSubIndex, newAudioLang, newSubLang, subtitleDisabled);
+                    return new TrackSelection(targetId, newAudioIndex, newSubIndex, newAudioLang, newSubLang, subtitleDisabled, newIsHearingImpaired, newIsForced);
                 }
 
                 return existing;
@@ -186,6 +198,8 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
                     AudioLanguage = kvp.Value.AudioLanguage,
                     SubtitleLanguage = kvp.Value.SubtitleLanguage,
                     SubtitleDisabled = kvp.Value.SubtitleDisabled,
+                    SubtitleIsHearingImpaired = kvp.Value.SubtitleIsHearingImpaired,
+                    SubtitleIsForced = kvp.Value.SubtitleIsForced,
                     UpdatedAtUtc = kvp.Value.UpdatedAtUtc
                 });
             }
@@ -245,7 +259,9 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
                         rec.SubtitleStreamIndex,
                         rec.AudioLanguage,
                         rec.SubtitleLanguage,
-                        rec.SubtitleDisabled)
+                        rec.SubtitleDisabled,
+                        rec.SubtitleIsHearingImpaired,
+                        rec.SubtitleIsForced)
                     {
                         UpdatedAtUtc = rec.UpdatedAtUtc
                     };
@@ -301,6 +317,8 @@ public class TrackMemoryStore : ITrackMemoryStore, IDisposable
         public string? AudioLanguage { get; set; }
         public string? SubtitleLanguage { get; set; }
         public bool SubtitleDisabled { get; set; }
+        public bool? SubtitleIsHearingImpaired { get; set; }
+        public bool? SubtitleIsForced { get; set; }
         public DateTime UpdatedAtUtc { get; set; }
     }
 }

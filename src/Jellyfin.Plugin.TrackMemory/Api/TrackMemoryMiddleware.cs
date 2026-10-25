@@ -65,13 +65,13 @@ public class TrackMemoryMiddleware
         }
 
         var path = context.Request.Path.Value ?? string.Empty;
-        if (!IsPlaybackInfoRequest(path, out var itemId))
+        if (!TryMatchInterceptedRequest(path, out var itemId, out var routeUserId, out var isPlaybackInfo))
         {
             await _next(context).ConfigureAwait(false);
             return;
         }
 
-        var userId = ExtractUserId(context);
+        var userId = ExtractUserId(context, routeUserId);
 
         var item = _libraryManager.GetItemById(itemId);
         Guid? seriesId = null;
@@ -80,53 +80,20 @@ public class TrackMemoryMiddleware
             seriesId = episode.SeriesId;
         }
 
-        // 1. Inspect request for explicit track selections (e.g. from item details page dropdown)
-        var explicitRequestIndices = await InspectRequestForOverridesAsync(context, userId, itemId).ConfigureAwait(false);
-
-        // If client explicitly requested audio or subtitle stream index in the request,
-        // it takes priority and will be respected by downstream Jellyfin, and we record it now.
-        if (userId != Guid.Empty && (explicitRequestIndices.AudioIndex.HasValue || explicitRequestIndices.SubtitleIndex.HasValue))
+        // Only explicit query string parameters are treated as immediate overrides
+        int? explicitAudio = null;
+        int? explicitSub = null;
+        if (context.Request.Query.TryGetValue("audioStreamIndex", out var aVal) && int.TryParse(aVal, out var aIdx))
         {
-            string? audioLang = null;
-            string? subLang = null;
-            bool subDisabled = explicitRequestIndices.SubtitleIndex == -1;
-
-            if (item != null)
-            {
-                var streams = item.GetMediaStreams();
-                if (explicitRequestIndices.AudioIndex.HasValue)
-                {
-                    audioLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.Index == explicitRequestIndices.AudioIndex.Value)?.Language;
-                }
-
-                if (explicitRequestIndices.SubtitleIndex.HasValue && explicitRequestIndices.SubtitleIndex.Value >= 0)
-                {
-                    subLang = streams.FirstOrDefault(s => s.Type == MediaStreamType.Subtitle && s.Index == explicitRequestIndices.SubtitleIndex.Value)?.Language;
-                }
-            }
-
-            _logger.LogDebug(
-                "Captured explicit track selection from request for user {UserId}, item {ItemId} (series {SeriesId}): Audio={Audio} ({AudioLang}), Sub={Sub} ({SubLang})",
-                userId,
-                itemId,
-                seriesId,
-                explicitRequestIndices.AudioIndex,
-                audioLang,
-                explicitRequestIndices.SubtitleIndex,
-                subLang);
-
-            _store.SaveSelection(
-                userId,
-                itemId,
-                seriesId,
-                explicitRequestIndices.AudioIndex,
-                explicitRequestIndices.SubtitleIndex,
-                audioLang,
-                subLang,
-                subDisabled);
+            explicitAudio = aIdx;
         }
+        if (context.Request.Query.TryGetValue("subtitleStreamIndex", out var sVal) && int.TryParse(sVal, out var sIdx))
+        {
+            explicitSub = sIdx;
+        }
+        var explicitRequestIndices = (explicitAudio, explicitSub);
 
-        // 2. Intercept response to rewrite DefaultAudioStreamIndex / DefaultSubtitleStreamIndex
+        // Intercept response to rewrite DefaultAudioStreamIndex / DefaultSubtitleStreamIndex
         var originalBodyStream = context.Response.Body;
         await using var responseBodyStream = new MemoryStream();
         context.Response.Body = responseBodyStream;
@@ -231,35 +198,105 @@ public class TrackMemoryMiddleware
         }
     }
 
-    private static bool IsPlaybackInfoRequest(string path, out Guid itemId)
+    /// <summary>
+    /// Checks whether the request path matches an item details or playback info endpoint.
+    /// Supported formats:
+    /// - /Users/{userId}/Items/{itemId} (Item Details page on Web, LG webOS, mobile)
+    /// - /Items/{itemId}/PlaybackInfo (Playback negotiation)
+    /// - /Items/{itemId} (Item Details fallback)
+    /// </summary>
+    /// <param name="path">The request path.</param>
+    /// <param name="itemId">The extracted item identifier.</param>
+    /// <param name="routeUserId">The extracted user identifier from the route, if present.</param>
+    /// <param name="isPlaybackInfo">True if this is a PlaybackInfo request, false for Item Details.</param>
+    /// <returns>True if the request should be intercepted.</returns>
+    public static bool TryMatchInterceptedRequest(
+        string path,
+        out Guid itemId,
+        out Guid? routeUserId,
+        out bool isPlaybackInfo)
     {
         itemId = Guid.Empty;
+        routeUserId = null;
+        isPlaybackInfo = false;
+
         if (string.IsNullOrEmpty(path))
         {
             return false;
         }
 
-        // Expected format: /Items/{itemId}/PlaybackInfo
-        const string itemsPrefix = "/Items/";
-        const string suffix = "/PlaybackInfo";
-
-        var idxPrefix = path.IndexOf(itemsPrefix, StringComparison.OrdinalIgnoreCase);
-        if (idxPrefix >= 0 && path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        // 1. /Users/{userId}/Items/{itemId}
+        const string usersPrefix = "/Users/";
+        const string itemsSub = "/Items/";
+        var uIdx = path.IndexOf(usersPrefix, StringComparison.OrdinalIgnoreCase);
+        if (uIdx >= 0)
         {
-            var start = idxPrefix + itemsPrefix.Length;
-            var end = path.Length - suffix.Length;
+            var afterUsers = uIdx + usersPrefix.Length;
+            var iIdx = path.IndexOf(itemsSub, afterUsers, StringComparison.OrdinalIgnoreCase);
+            if (iIdx > afterUsers)
+            {
+                var userStr = path.Substring(afterUsers, iIdx - afterUsers);
+                var afterItems = iIdx + itemsSub.Length;
+                var nextSlash = path.IndexOf('/', afterItems);
+                var itemStr = nextSlash >= 0 ? path.Substring(afterItems, nextSlash - afterItems) : path.Substring(afterItems);
+
+                if (nextSlash < 0 || nextSlash == path.Length - 1)
+                {
+                    if (Guid.TryParse(userStr, out var uGuid) && Guid.TryParse(itemStr, out itemId))
+                    {
+                        routeUserId = uGuid;
+                        isPlaybackInfo = false;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 2. /Items/{itemId}/PlaybackInfo
+        const string itemsPrefix = "/Items/";
+        const string playbackSuffix = "/PlaybackInfo";
+        var itemsIdx = path.IndexOf(itemsPrefix, StringComparison.OrdinalIgnoreCase);
+        if (itemsIdx >= 0 && path.EndsWith(playbackSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            var start = itemsIdx + itemsPrefix.Length;
+            var end = path.Length - playbackSuffix.Length;
             if (end > start)
             {
                 var idStr = path.Substring(start, end - start);
-                return Guid.TryParse(idStr, out itemId);
+                if (Guid.TryParse(idStr, out itemId))
+                {
+                    isPlaybackInfo = true;
+                    return true;
+                }
+            }
+        }
+
+        // 3. /Items/{itemId} (exact single segment)
+        if (itemsIdx >= 0 && !path.EndsWith(playbackSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            var start = itemsIdx + itemsPrefix.Length;
+            var nextSlash = path.IndexOf('/', start);
+            if (nextSlash < 0 || nextSlash == path.Length - 1)
+            {
+                var idStr = nextSlash >= 0 ? path.Substring(start, nextSlash - start) : path.Substring(start);
+                if (Guid.TryParse(idStr, out itemId))
+                {
+                    isPlaybackInfo = false;
+                    return true;
+                }
             }
         }
 
         return false;
     }
 
-    private Guid ExtractUserId(HttpContext context)
+    private Guid ExtractUserId(HttpContext context, Guid? routeUserId = null)
     {
+        if (routeUserId.HasValue && routeUserId.Value != Guid.Empty)
+        {
+            return routeUserId.Value;
+        }
+
         // 1. Try Query string ?userId=...
         var userIdQuery = context.Request.Query["userId"].ToString();
         if (Guid.TryParse(userIdQuery, out var userGuid))
@@ -279,57 +316,6 @@ public class TrackMemoryMiddleware
         }
 
         return Guid.Empty;
-    }
-
-    private async Task<(int? AudioIndex, int? SubtitleIndex)> InspectRequestForOverridesAsync(
-        HttpContext context,
-        Guid userId,
-        Guid itemId)
-    {
-        int? audioIndex = null;
-        int? subtitleIndex = null;
-
-        // Query string inspection (?audioStreamIndex=... & subtitleStreamIndex=...)
-        if (context.Request.Query.TryGetValue("audioStreamIndex", out var audioVal) && int.TryParse(audioVal, out var aIdx))
-        {
-            audioIndex = aIdx;
-        }
-
-        if (context.Request.Query.TryGetValue("subtitleStreamIndex", out var subVal) && int.TryParse(subVal, out var sIdx))
-        {
-            subtitleIndex = sIdx;
-        }
-
-        // POST body inspection if body is JSON
-        if (HttpMethods.IsPost(context.Request.Method)
-            && (context.Request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) ?? false)
-            && context.Request.ContentLength > 0)
-        {
-            context.Request.EnableBuffering();
-            try
-            {
-                using var reader = new StreamReader(context.Request.Body, leaveOpen: true);
-                var body = await reader.ReadToEndAsync().ConfigureAwait(false);
-                context.Request.Body.Position = 0;
-
-                var (bodyAudio, bodySub) = ParseJsonStreamIndices(body);
-                if (bodyAudio.HasValue)
-                {
-                    audioIndex = bodyAudio;
-                }
-                if (bodySub.HasValue)
-                {
-                    subtitleIndex = bodySub;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to parse PlaybackInfo POST request body");
-                context.Request.Body.Position = 0;
-            }
-        }
-
-        return (audioIndex, subtitleIndex);
     }
 
     /// <summary>
@@ -464,7 +450,12 @@ public class TrackMemoryMiddleware
                         int? resolvedSub = null;
                         if (!string.IsNullOrEmpty(remembered.SubtitleLanguage) && streamsArray != null)
                         {
-                            resolvedSub = FindStreamIndexByLanguage(streamsArray, "Subtitle", remembered.SubtitleLanguage);
+                            resolvedSub = FindStreamIndexByLanguage(
+                                streamsArray,
+                                "Subtitle",
+                                remembered.SubtitleLanguage,
+                                remembered.SubtitleIsHearingImpaired,
+                                remembered.SubtitleIsForced);
                         }
 
                         resolvedSub ??= remembered.SubtitleStreamIndex;
@@ -481,8 +472,15 @@ public class TrackMemoryMiddleware
         return JsonSerializer.SerializeToUtf8Bytes(rootObj, new JsonSerializerOptions { WriteIndented = false });
     }
 
-    private static int? FindStreamIndexByLanguage(JsonArray streams, string streamType, string languageCode)
+    private static int? FindStreamIndexByLanguage(
+        JsonArray streams,
+        string streamType,
+        string languageCode,
+        bool? isHearingImpaired = null,
+        bool? isForced = null)
     {
+        int? firstLangMatch = null;
+
         foreach (var s in streams)
         {
             if (s is not JsonObject sObj)
@@ -502,16 +500,75 @@ public class TrackMemoryMiddleware
                 continue;
             }
 
-            if (AreLanguagesEquivalent(lang, languageCode))
+            if (!AreLanguagesEquivalent(lang, languageCode))
             {
-                if (sObj["Index"]?.GetValue<int>() is int idx)
+                continue;
+            }
+
+            var idxNode = sObj["Index"];
+            if (idxNode == null)
+            {
+                continue;
+            }
+
+            int idx;
+            try
+            {
+                idx = idxNode.GetValue<int>();
+            }
+            catch
+            {
+                continue;
+            }
+
+            firstLangMatch ??= idx;
+
+            if (string.Equals(streamType, "Subtitle", StringComparison.OrdinalIgnoreCase))
+            {
+                bool streamHearingImpaired = false;
+                if (sObj.TryGetPropertyValue("IsHearingImpaired", out var hiNode) && hiNode != null)
+                {
+                    try { streamHearingImpaired = hiNode.GetValue<bool>(); } catch { }
+                }
+
+                if (!streamHearingImpaired)
+                {
+                    var title = sObj["Title"]?.GetValue<string>() ?? string.Empty;
+                    if (title.Contains("SDH", StringComparison.OrdinalIgnoreCase) || title.Contains("CC", StringComparison.OrdinalIgnoreCase))
+                    {
+                        streamHearingImpaired = true;
+                    }
+                }
+
+                bool streamForced = false;
+                if (sObj.TryGetPropertyValue("IsForced", out var fNode) && fNode != null)
+                {
+                    try { streamForced = fNode.GetValue<bool>(); } catch { }
+                }
+
+                // Check for exact variant match:
+                if (isHearingImpaired == true && streamHearingImpaired)
+                {
+                    return idx;
+                }
+
+                if (isForced == true && streamForced)
+                {
+                    return idx;
+                }
+
+                if (isHearingImpaired == false && isForced == false && !streamHearingImpaired && !streamForced)
                 {
                     return idx;
                 }
             }
+            else
+            {
+                return idx;
+            }
         }
 
-        return null;
+        return firstLangMatch;
     }
 
     private static bool AreLanguagesEquivalent(string a, string b)
