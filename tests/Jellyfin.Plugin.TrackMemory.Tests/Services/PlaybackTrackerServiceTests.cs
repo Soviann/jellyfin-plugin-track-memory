@@ -81,6 +81,61 @@ public class PlaybackTrackerServiceTests
             4,
             "eng",
             "eng",
+            false,
+            false,
+            false), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessPlaybackEvent_WithSDHSubtitles_PassesHearingImpairedTrue()
+    {
+        // Nominal: Subtitle stream with IsHearingImpaired = true passes subtitleIsHearingImpaired: true
+        var service = new PlaybackTrackerService(
+            _sessionManagerMock.Object,
+            _storeMock.Object,
+            NullLogger<PlaybackTrackerService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+
+        var userId = Guid.NewGuid();
+        var seriesId = Guid.NewGuid();
+        var episode = new TestEpisode(new List<MediaStream>
+        {
+            new MediaStream { Type = MediaStreamType.Audio, Index = 1, Language = "eng" },
+            new MediaStream { Type = MediaStreamType.Subtitle, Index = 7, Language = "eng", IsHearingImpaired = true, IsForced = false }
+        })
+        {
+            Id = Guid.NewGuid(),
+            SeriesId = seriesId,
+            Name = "Below S01E04"
+        };
+
+        var session = new SessionInfo(_sessionManagerMock.Object, NullLogger.Instance)
+        {
+            UserId = userId,
+            PlayState = new PlayerStateInfo
+            {
+                AudioStreamIndex = 1,
+                SubtitleStreamIndex = 7
+            }
+        };
+
+        _sessionManagerMock.Raise(s => s.PlaybackStart += null, new PlaybackProgressEventArgs
+        {
+            Session = session,
+            Item = episode
+        });
+
+        _storeMock.Verify(s => s.SaveSelection(
+            userId,
+            episode.Id,
+            seriesId,
+            1,
+            7,
+            "eng",
+            "eng",
+            false,
+            true,
             false), Times.Once);
     }
 
@@ -129,7 +184,9 @@ public class PlaybackTrackerServiceTests
             -1,
             "fre",
             null,
-            true), Times.Once);
+            true,
+            null,
+            null), Times.Once);
     }
 
     [Fact]
@@ -164,7 +221,9 @@ public class PlaybackTrackerServiceTests
             It.IsAny<int?>(),
             It.IsAny<string?>(),
             It.IsAny<string?>(),
-            It.IsAny<bool>()), Times.Never);
+            It.IsAny<bool>(),
+            It.IsAny<bool?>(),
+            It.IsAny<bool?>()), Times.Never);
     }
 
     private sealed class TestEpisode : Episode

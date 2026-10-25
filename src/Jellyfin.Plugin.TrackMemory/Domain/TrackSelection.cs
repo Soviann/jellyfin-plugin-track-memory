@@ -38,6 +38,16 @@ public class TrackSelection
     public bool SubtitleDisabled { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the preferred subtitle is Hearing Impaired / SDH.
+    /// </summary>
+    public bool? SubtitleIsHearingImpaired { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the preferred subtitle is Forced.
+    /// </summary>
+    public bool? SubtitleIsForced { get; set; }
+
+    /// <summary>
     /// Gets or sets the UTC timestamp when this selection was last updated.
     /// </summary>
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
@@ -58,13 +68,17 @@ public class TrackSelection
     /// <param name="audioLanguage">The audio stream language code.</param>
     /// <param name="subtitleLanguage">The subtitle stream language code.</param>
     /// <param name="subtitleDisabled">Whether subtitles are explicitly disabled.</param>
+    /// <param name="subtitleIsHearingImpaired">Whether the subtitle track is SDH / hearing impaired.</param>
+    /// <param name="subtitleIsForced">Whether the subtitle track is forced.</param>
     public TrackSelection(
         Guid itemId,
         int? audioStreamIndex,
         int? subtitleStreamIndex,
         string? audioLanguage = null,
         string? subtitleLanguage = null,
-        bool subtitleDisabled = false)
+        bool subtitleDisabled = false,
+        bool? subtitleIsHearingImpaired = null,
+        bool? subtitleIsForced = null)
     {
         ItemId = itemId;
         AudioStreamIndex = audioStreamIndex;
@@ -72,6 +86,8 @@ public class TrackSelection
         AudioLanguage = audioLanguage;
         SubtitleLanguage = subtitleLanguage;
         SubtitleDisabled = subtitleDisabled || subtitleStreamIndex == -1;
+        SubtitleIsHearingImpaired = subtitleIsHearingImpaired;
+        SubtitleIsForced = subtitleIsForced;
         UpdatedAtUtc = DateTime.UtcNow;
     }
 }
